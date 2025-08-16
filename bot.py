@@ -15,7 +15,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Загрузка базы BIN-кодов из ZIP-архива
+# Глобальная переменная для базы BIN-кодов
 bin_db = {}
 
 def load_db():
@@ -37,12 +37,10 @@ def load_db():
                     "CountryName": row.get("CountryName", "Unknown"),
                 }
         logger.info(f"Загружено {len(bin_db)} BIN-кодов")
-        
     except Exception as e:
         logger.error(f"Ошибка загрузки базы: {str(e)}")
-        raise  # Прерываем работу при ошибке
+        raise
 
-# Определение платёжной системы
 def get_card_scheme(bin_code: str) -> str:
     if not bin_code.isdigit() or len(bin_code) < 6:
         return "Unknown"
@@ -60,7 +58,6 @@ def get_card_scheme(bin_code: str) -> str:
     else:
         return "Unknown"
 
-# Обработчики команд
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🔍 Привет! Пришли мне первые 6 цифр номера карты (BIN), "
@@ -84,13 +81,11 @@ async def check_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     issuer = "Unknown"
     country = "Unknown"
 
-    # Сначала проверяем локальную базу
     if bin_code in bin_db:
         data = bin_db[bin_code]
         issuer = data.get("Issuer", issuer)
         country = data.get("CountryName", country)
     else:
-        # Если нет в базе - запрашиваем через API
         try:
             url = f"https://lookup.binlist.net/{bin_code}"
             headers = {"Accept-Version": "3"}
@@ -110,7 +105,6 @@ async def check_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML"
     )
 
-# Keep-Alive сервер для Render
 async def keep_alive():
     app = web.Application()
     app.router.add_get("/", lambda request: web.Response(text="Bot is alive!"))
@@ -119,8 +113,8 @@ async def keep_alive():
     site = web.TCPSite(runner, "0.0.0.0", 8080)
     await site.start()
     logger.info("Keep-alive сервер запущен на порту 8080")
+    return runner  # Возвращаем runner для корректного завершения
 
-# Запуск бота
 async def main():
     # Инициализация базы данных
     try:
@@ -136,16 +130,20 @@ async def main():
         return
 
     # Создаем и настраиваем приложение
-    app = Application.builder().token(token).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_card))
+    application = Application.builder().token(token).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_card))
 
     # Запускаем keep-alive
-    asyncio.create_task(keep_alive())
+    runner = await keep_alive()
 
-    # Запускаем бота
-    logger.info("Бот запускается...")
-    await app.run_polling()
+    try:
+        logger.info("Бот запускается...")
+        await application.run_polling()
+    finally:
+        # Корректное завершение
+        await runner.cleanup()
+        logger.info("Бот остановлен")
 
 if __name__ == "__main__":
     asyncio.run(main())
