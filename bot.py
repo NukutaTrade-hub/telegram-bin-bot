@@ -86,13 +86,11 @@ async def check_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     issuer = "Unknown"
     country = "Unknown"
 
-    # Проверяем локальную базу
     if bin_code in bin_db:
         data = bin_db[bin_code]
         issuer = data.get("Issuer", issuer)
         country = data.get("CountryName", country)
     else:
-        # Запрашиваем через API, если нет в базе
         try:
             url = f"https://lookup.binlist.net/{bin_code}"
             headers = {"Accept-Version": "3"}
@@ -117,7 +115,7 @@ async def health_check(request):
     return web.Response(text="OK")
 
 async def run_server():
-    """Запуск HTTP-сервера для Render"""
+    """Запуск HTTP-сервера"""
     app = web.Application()
     app.router.add_get("/", health_check)
     runner = web.AppRunner(app)
@@ -136,7 +134,7 @@ async def main():
     # Проверка токена
     token = os.getenv("TELEGRAM_TOKEN")
     if not token:
-        logger.error("Токен бота не найден!")
+        logger.error("Токен бота не найден! Добавьте TELEGRAM_TOKEN в переменные окружения.")
         return
 
     # Запускаем HTTP-сервер
@@ -150,10 +148,24 @@ async def main():
 
     # Запускаем бота
     logger.info("Бот запускается...")
-    await application.run_polling()
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
 
-    # Корректное завершение
+    # Бесконечный цикл для поддержания работы
+    while True:
+        await asyncio.sleep(3600)  # Проверка каждые 60 минут
+
+    # Корректное завершение (теоретически недостижимо)
+    await application.updater.stop()
+    await application.stop()
+    await application.shutdown()
     await runner.cleanup()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Бот остановлен")
+    except Exception as e:
+        logger.error(f"Критическая ошибка: {str(e)}")
