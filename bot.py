@@ -114,18 +114,19 @@ async def health_check(request):
     """HTTP-обработчик для проверки здоровья"""
     return web.Response(text="OK")
 
-async def run_server():
-    """Запуск HTTP-сервера"""
+async def run_http_server(port):
+    """Запуск HTTP-сервера для Render"""
     app = web.Application()
     app.router.add_get("/", health_check)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", 8080)
+    site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
+    logger.info(f"HTTP-сервер запущен на порту {port}")
     return runner
 
-async def main():
-    """Основная функция запуска"""
+async def run_bot():
+    """Основная функция запуска бота"""
     # Загрузка базы данных
     if not load_db():
         logger.critical("Не удалось загрузить базу BIN-кодов!")
@@ -134,12 +135,14 @@ async def main():
     # Проверка токена
     token = os.getenv("TELEGRAM_TOKEN")
     if not token:
-        logger.error("Токен бота не найден! Добавьте TELEGRAM_TOKEN в переменные окружения.")
+        logger.error("Токен бота не найден!")
         return
 
+    # Получаем порт из переменных окружения (для Render)
+    port = int(os.environ.get("PORT", 8080))
+
     # Запускаем HTTP-сервер
-    runner = await run_server()
-    logger.info("HTTP-сервер запущен на порту 8080")
+    http_runner = await run_http_server(port)
 
     # Создаем и настраиваем приложение бота
     application = Application.builder().token(token).build()
@@ -153,19 +156,23 @@ async def main():
     await application.updater.start_polling()
 
     # Бесконечный цикл для поддержания работы
-    while True:
-        await asyncio.sleep(3600)  # Проверка каждые 60 минут
-
-    # Корректное завершение (теоретически недостижимо)
-    await application.updater.stop()
-    await application.stop()
-    await application.shutdown()
-    await runner.cleanup()
+    try:
+        while True:
+            await asyncio.sleep(3600)  # Проверка каждые 60 минут
+    except asyncio.CancelledError:
+        logger.info("Получен сигнал остановки")
+    finally:
+        # Корректное завершение
+        await application.updater.stop()
+        await application.stop()
+        await application.shutdown()
+        await http_runner.cleanup()
+        logger.info("Бот остановлен")
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        asyncio.run(run_bot())
     except KeyboardInterrupt:
-        logger.info("Бот остановлен")
+        logger.info("Бот остановлен по запросу пользователя")
     except Exception as e:
         logger.error(f"Критическая ошибка: {str(e)}")
