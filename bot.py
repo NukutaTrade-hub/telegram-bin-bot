@@ -111,7 +111,7 @@ async def check_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML"
     )
 
-async def run_bot():
+def main():
     """Основная функция запуска бота"""
     # Загрузка базы данных
     if not load_db():
@@ -129,10 +129,9 @@ async def run_bot():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_card))
 
-    # Запускаем бота
+    # Запускаем бота (синхронный вариант)
     logger.info("Бот запускается...")
-    await application.run_polling()
+    application.run_polling()
 
 if __name__ == "__main__":
-    # Упрощенный запуск без keep-alive (для Render он не нужен)
-    asyncio.run(run_bot())
+    main()
