@@ -6,6 +6,7 @@ import zipfile
 import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from aiohttp import web
 
 # Настройка логов
 logging.basicConfig(
@@ -111,8 +112,22 @@ async def check_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML"
     )
 
-def main():
-    """Основная функция запуска бота"""
+async def health_check(request):
+    """HTTP-обработчик для проверки здоровья"""
+    return web.Response(text="OK")
+
+async def run_server():
+    """Запуск HTTP-сервера для Render"""
+    app = web.Application()
+    app.router.add_get("/", health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", 8080)
+    await site.start()
+    return runner
+
+async def main():
+    """Основная функция запуска"""
     # Загрузка базы данных
     if not load_db():
         logger.critical("Не удалось загрузить базу BIN-кодов!")
@@ -124,14 +139,21 @@ def main():
         logger.error("Токен бота не найден!")
         return
 
-    # Создаем и настраиваем приложение
+    # Запускаем HTTP-сервер
+    runner = await run_server()
+    logger.info("HTTP-сервер запущен на порту 8080")
+
+    # Создаем и настраиваем приложение бота
     application = Application.builder().token(token).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_card))
 
-    # Запускаем бота (синхронный вариант)
+    # Запускаем бота
     logger.info("Бот запускается...")
-    application.run_polling()
+    await application.run_polling()
+
+    # Корректное завершение
+    await runner.cleanup()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
