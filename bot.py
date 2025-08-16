@@ -6,7 +6,6 @@ import zipfile
 import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from aiohttp import web
 
 # Настройка логов
 logging.basicConfig(
@@ -19,16 +18,18 @@ logger = logging.getLogger(__name__)
 bin_db = {}
 
 def load_db():
+    """Загрузка базы BIN-кодов из ZIP-архива"""
     try:
         # Проверяем, нужно ли распаковать архив
-        if not os.path.exists("full_bins.csv"):
+        csv_path = "full_bins.csv"
+        if not os.path.exists(csv_path):
             logger.info("Распаковываю архив full_bins.zip...")
             with zipfile.ZipFile("full_bins.zip", 'r') as zip_ref:
                 zip_ref.extractall()
                 logger.info("Архив успешно распакован")
         
         # Загружаем данные из CSV
-        with open("full_bins.csv", newline="", encoding="utf-8") as f:
+        with open(csv_path, newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
                 bin_db[row["BIN"]] = {
@@ -37,11 +38,13 @@ def load_db():
                     "CountryName": row.get("CountryName", "Unknown"),
                 }
         logger.info(f"Загружено {len(bin_db)} BIN-кодов")
+        return True
     except Exception as e:
         logger.error(f"Ошибка загрузки базы: {str(e)}")
-        raise
+        return False
 
 def get_card_scheme(bin_code: str) -> str:
+    """Определение платёжной системы по BIN-коду"""
     if not bin_code.isdigit() or len(bin_code) < 6:
         return "Unknown"
 
@@ -55,10 +58,10 @@ def get_card_scheme(bin_code: str) -> str:
         return "MasterCard"
     elif 2200 <= first_four <= 2204:
         return "МИР"
-    else:
-        return "Unknown"
+    return "Unknown"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /start"""
     await update.message.reply_text(
         "🔍 Привет! Пришли мне первые 6 цифр номера карты (BIN), "
         "и я определю банк, страну и платёжную систему.\n"
@@ -67,6 +70,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def check_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик проверки BIN-кода"""
     text = update.message.text.strip()
     bin_code = text[:6] if text.isdigit() else ""
 
@@ -81,11 +85,13 @@ async def check_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     issuer = "Unknown"
     country = "Unknown"
 
+    # Проверяем локальную базу
     if bin_code in bin_db:
         data = bin_db[bin_code]
         issuer = data.get("Issuer", issuer)
         country = data.get("CountryName", country)
     else:
+        # Запрашиваем через API, если нет в базе
         try:
             url = f"https://lookup.binlist.net/{bin_code}"
             headers = {"Accept-Version": "3"}
@@ -105,28 +111,17 @@ async def check_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML"
     )
 
-async def keep_alive():
-    app = web.Application()
-    app.router.add_get("/", lambda request: web.Response(text="Bot is alive!"))
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", 8080)
-    await site.start()
-    logger.info("Keep-alive сервер запущен на порту 8080")
-    return runner  # Возвращаем runner для корректного завершения
-
-async def main():
-    # Инициализация базы данных
-    try:
-        load_db()
-    except Exception as e:
-        logger.critical(f"Не удалось загрузить базу: {str(e)}")
+async def run_bot():
+    """Основная функция запуска бота"""
+    # Загрузка базы данных
+    if not load_db():
+        logger.critical("Не удалось загрузить базу BIN-кодов!")
         return
 
     # Проверка токена
     token = os.getenv("TELEGRAM_TOKEN")
     if not token:
-        logger.error("Токен бота не найден! Добавьте TELEGRAM_TOKEN в переменные окружения.")
+        logger.error("Токен бота не найден!")
         return
 
     # Создаем и настраиваем приложение
@@ -134,16 +129,10 @@ async def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_card))
 
-    # Запускаем keep-alive
-    runner = await keep_alive()
-
-    try:
-        logger.info("Бот запускается...")
-        await application.run_polling()
-    finally:
-        # Корректное завершение
-        await runner.cleanup()
-        logger.info("Бот остановлен")
+    # Запускаем бота
+    logger.info("Бот запускается...")
+    await application.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Упрощенный запуск без keep-alive (для Render он не нужен)
+    asyncio.run(run_bot())
